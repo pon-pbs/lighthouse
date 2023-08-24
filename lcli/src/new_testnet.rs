@@ -89,6 +89,11 @@ pub fn run<T: EthSpec>(testnet_dir_path: PathBuf, matches: &ArgMatches) -> Resul
         spec.terminal_total_difficulty = ttd;
     }
 
+    let mut withdrawal_credentials = String::from("");
+    if let Some(withdrawal_credentials_string) = parse_optional(matches, "withdrawal_credentials")? {
+        withdrawal_credentials = withdrawal_credentials_string;
+    }
+    
     let validator_count = parse_required(matches, "validator-count")?;
     let execution_payload_header: Option<ExecutionPayloadHeader<T>> =
         parse_optional(matches, "execution-payload-header")?
@@ -141,6 +146,7 @@ pub fn run<T: EthSpec>(testnet_dir_path: PathBuf, matches: &ArgMatches) -> Resul
 
         let genesis_state = initialize_state_with_validators::<T>(
             &keypairs,
+            withdrawal_credentials,
             genesis_time,
             eth1_block_hash.into_root(),
             execution_payload_header,
@@ -177,6 +183,7 @@ pub fn run<T: EthSpec>(testnet_dir_path: PathBuf, matches: &ArgMatches) -> Resul
             .collect::<Vec<_>>();
         let genesis_state = initialize_state_with_validators::<T>(
             &keypairs,
+            withdrawal_credentials,
             genesis_time,
             eth1_block_hash.into_root(),
             execution_payload_header,
@@ -208,6 +215,7 @@ pub fn run<T: EthSpec>(testnet_dir_path: PathBuf, matches: &ArgMatches) -> Resul
 /// generated from the execution side `genesis.json`.
 fn initialize_state_with_validators<T: EthSpec>(
     keypairs: &[(Keypair, Keypair)], // Voting and Withdrawal keypairs
+    user_withdrawal_credential: String,
     genesis_time: u64,
     eth1_block_hash: Hash256,
     execution_payload_header: Option<ExecutionPayloadHeader<T>>,
@@ -236,16 +244,25 @@ fn initialize_state_with_validators<T: EthSpec>(
     state.fill_randao_mixes_with(eth1_block_hash);
 
     for keypair in keypairs.iter() {
-        let withdrawal_credentials = |pubkey: &PublicKey| {
-            let mut credentials = hash(&pubkey.as_ssz_bytes());
-            credentials[0] = spec.bls_withdrawal_prefix_byte;
-            Hash256::from_slice(&credentials)
+        let withdrawal_credentials = |pubkey: &PublicKey, pubkey_string: &String| {
+            if *pubkey_string != String::from("") {
+                Hash256::from_str(
+                    pubkey_string,
+                )
+                .unwrap()
+            }
+            else {
+                let mut credentials = hash(&pubkey.as_ssz_bytes());
+                credentials[0] = spec.bls_withdrawal_prefix_byte;
+                Hash256::from_slice(&credentials)
+            }
         };
+
         let amount = spec.max_effective_balance;
         // Create a new validator.
         let validator = Validator {
             pubkey: keypair.0.pk.clone().into(),
-            withdrawal_credentials: withdrawal_credentials(&keypair.1.pk),
+            withdrawal_credentials: withdrawal_credentials(&keypair.1.pk, &user_withdrawal_credential),
             activation_eligibility_epoch: spec.far_future_epoch,
             activation_epoch: spec.far_future_epoch,
             exit_epoch: spec.far_future_epoch,
